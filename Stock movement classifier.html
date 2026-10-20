@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stock movement classifier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --bg: #F2F4F3; --surface: #FFFFFF; --ink: #18212B; --muted: #5B6670; --line: #D7DDE0;
+  --dry: #9A6A2A; --dry-tint: #F6EEE2;
+  --chilled: #157F94; --chilled-tint: #E3F2F5;
+  --frozen: #3F51C2; --frozen-tint: #E8EBFA;
+  --unset: #6E7883; --unset-tint: #ECEEF0;
+  --fast: #1D8048; --medium: #B87C0C; --slow: #BF3E2A; --non: #8A949E;
+  --focus: #3F51C2;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #12171C; --surface: #1A2128; --ink: #E5EAEE; --muted: #9AA5AF; --line: #2D3741;
+    --dry: #D9A25A; --dry-tint: #2A231A; --chilled: #4CC0D6; --chilled-tint: #142A30;
+    --frozen: #8D9BFF; --frozen-tint: #1C2140; --unset: #9AA5AF; --unset-tint: #222A31;
+    --fast: #4CC27E; --medium: #E2AA3B; --slow: #F07361; --non: #7D8893; --focus: #8D9BFF;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12171C; --surface: #1A2128; --ink: #E5EAEE; --muted: #9AA5AF; --line: #2D3741;
+  --dry: #D9A25A; --dry-tint: #2A231A; --chilled: #4CC0D6; --chilled-tint: #142A30;
+  --frozen: #8D9BFF; --frozen-tint: #1C2140; --unset: #9AA5AF; --unset-tint: #222A31;
+  --fast: #4CC27E; --medium: #E2AA3B; --slow: #F07361; --non: #7D8893; --focus: #8D9BFF;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Barlow", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 1rem; line-height: 1.5; font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+h1, h2, .zone-name { font-family: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif; }
+h1 { font-size: clamp(2rem, 5vw, 2.8rem); line-height: 1.05; margin: 0 0 .4rem; letter-spacing: -.01em; }
+h2 { font-size: 1.5rem; margin: 0 0 .75rem; }
+.lede { color: var(--muted); margin: 0 0 1.5rem; max-width: 62ch; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* temperature strip in header */
+.strip { display: flex; height: 6px; border-radius: 3px; overflow: hidden; max-width: 260px; margin-bottom: 1.25rem; }
+.strip span { flex: 1; }
+.strip span:nth-child(1) { background: var(--dry); }
+.strip span:nth-child(2) { background: var(--chilled); }
+.strip span:nth-child(3) { background: var(--frozen); }
+
+.drop {
+  display: block; border: 2px dashed var(--line); border-radius: 10px; background: var(--surface);
+  padding: 1.75rem 1.25rem; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+}
+.drop:hover, .drop.over { border-color: var(--chilled); background: var(--chilled-tint); }
+.drop strong { display: block; font-size: 1.15rem; }
+.drop small { color: var(--muted); }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.status { margin: .75rem 0 0; color: var(--muted); min-height: 1.5em; }
+.status.error { color: var(--slow); }
+
+.hidden { display: none !important; }
+
+/* zones */
+.zones { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .75rem; margin: 2rem 0 1rem; }
+.zone {
+  text-align: left; font: inherit; color: inherit; background: var(--surface);
+  border: 1px solid var(--line); border-top: 8px solid var(--zc); border-radius: 8px;
+  padding: .9rem 1rem 1rem; cursor: pointer;
+}
+.zone[aria-pressed="true"] { background: var(--zt); border-color: var(--zc); }
+.zone-name { font-size: 1.6rem; font-weight: 700; line-height: 1; color: var(--zc); }
+.zone-count { color: var(--muted); font-size: .9rem; margin: .2rem 0 .7rem; }
+.bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); }
+.bar i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: .2rem .8rem; font-size: .85rem; margin-top: .55rem; }
+.dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .3rem; vertical-align: .05em; }
+
+.meta { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+
+/* toolbar */
+.toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 0 0 .75rem; }
+.chip {
+  font: inherit; font-size: .9rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 999px; padding: .3rem .8rem; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+input[type="search"], input[type="number"], select {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 6px; padding: .35rem .6rem;
+}
+input[type="search"] { flex: 1 1 200px; min-width: 0; }
+.btn {
+  font: inherit; font-weight: 600; border: 0; border-radius: 6px; padding: .45rem .9rem; cursor: pointer;
+  background: var(--ink); color: var(--surface);
+}
+.btn.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+
+/* table */
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+th, td { padding: .5rem .65rem; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.name { white-space: normal; min-width: 14rem; }
+th { font-weight: 600; color: var(--muted); background: var(--surface); position: sticky; top: 0; cursor: pointer; user-select: none; }
+th[aria-sort="ascending"]::after { content: " ▲"; font-size: .7em; }
+th[aria-sort="descending"]::after { content: " ▼"; font-size: .7em; }
+td.num, th.num { text-align: right; }
+tr:last-child td { border-bottom: 0; }
+.tag { display: inline-block; font-weight: 600; font-size: .82rem; padding: .1rem .55rem; border-radius: 4px; color: #fff; }
+.tag.Fast { background: var(--fast); } .tag.Medium { background: var(--medium); }
+.tag.Slow { background: var(--slow); } .tag.Non-moving { background: var(--non); }
+td select { padding: .2rem .4rem; font-size: .88rem; }
+  label.btn { display: inline-block; }
+.more { color: var(--muted); font-size: .9rem; padding: .6rem .2rem; }
+
+/* settings */
+details.settings { margin-top: 2.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+details.settings > summary { cursor: pointer; padding: 1rem 1.1rem; font-weight: 600; }
+.settings-body { padding: 0 1.1rem 1.2rem; display: grid; gap: 2rem; }
+.settings h3 { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 1.3rem; margin: 0 0 .3rem; }
+.settings p { color: var(--muted); margin: 0 0 .75rem; max-width: 70ch; font-size: .95rem; }
+.settings table { font-size: .9rem; }
+.settings .scroll { max-height: 360px; overflow: auto; }
+.thresholds { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; }
+.thresholds label { display: grid; gap: .25rem; font-size: .9rem; color: var(--muted); }
+.thresholds input { width: 7rem; }
+.row-inline { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="strip" aria-hidden="true"><span></span><span></span><span></span></div>
+  <h1>Stock movement classifier</h1>
+  <p class="lede">Upload a stock movement export to see which products are fast, medium, slow or not moving, split into dry, chilled and frozen. The file is read in this browser and isn’t uploaded anywhere.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".csv,.CSV,.xlsx,.xls,.txt">
+    <strong>Choose a stock movement file</strong>
+    <small>or drop it here (CSV or Excel)</small>
+  </label>
+  <p class="status" id="status" role="status"></p>
+
+  <section id="results" class="hidden">
+    <div class="zones" id="zones"></div>
+    <p class="meta" id="meta"></p>
+
+    <div class="toolbar">
+      <div id="classChips" role="group" aria-label="Filter by class"></div>
+      <input type="search" id="search" placeholder="Search product, name, bin or department" aria-label="Search">
+      <button class="btn hidden" id="exportZone">Download this area</button>
+      <button class="btn quiet hidden" id="exportAll">Download all areas</button>
+    </div>
+    <div class="scroll"><table id="table"><thead></thead><tbody></tbody></table></div>
+    <div class="more" id="more"></div>
+
+    <details class="settings" id="settings">
+      <summary>Adjust what counts as a pick and where products are stored</summary>
+      <div class="settings-body">
+        <div>
+          <h3>Storage area</h3>
+          <p>The tool decides each product’s area in this order: your own choice in the Storage column, then the column below if its value is set, then the product name (for example tofu and beansprouts are chilled, prawns and dim sum are frozen, rice and sauces are dry). Anything it still can’t place goes to “To check”.</p>
+          <div class="row-inline">
+            <label for="storageCol">Decide storage by</label>
+            <select id="storageCol"></select>
+          </div>
+          <div class="row-inline">
+            <input type="checkbox" id="defaultDry">
+            <label for="defaultDry">Count anything still unknown as dry</label>
+          </div>
+          <div id="mapWrap">
+          <div class="scroll"><table id="mapTable"><thead><tr><th>Value</th><th class="num">Lines</th><th>Storage area</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </div>
+        <div>
+          <h3>Storage list</h3>
+          <p>Every product’s area is shown in the Storage column of the main table. Change any that are wrong there; your changes win over the guesses and are remembered in this browser. Download the list to keep a copy or share it, and load it back on another computer.</p>
+          <div class="row-inline">
+            <button class="btn quiet hidden" id="exportList" type="button">Download storage list</button>
+            <label class="btn quiet" for="listFile">Load storage list</label>
+            <input type="file" id="listFile" accept=".csv,.CSV" class="hidden">
+            <button class="btn quiet" id="clearList" type="button">Clear my changes</button>
+          </div>
+          <p id="listStatus" role="status"></p>
+        </div>
+        <div>
+          <h3>Movement types counted as picks</h3>
+          <p>Tick the types that are sales or picks going out. Untick stock adjustments, transfers and write-offs so they don’t inflate the counts. Types that are mostly negative are ticked to start with.</p>
+          <div class="scroll"><table id="mtTable"><thead><tr><th>Pick</th><th>Move type</th><th class="num">Lines</th><th class="num">Out lines</th><th class="num">In lines</th><th>Example reason</th></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div>
+          <h3>Thresholds</h3>
+          <p>Within each storage area, products are ranked by how often they’re picked. Fast covers the first share of all picks, medium the next share, slow the rest.</p>
+          <div class="thresholds">
+            <label>Fast up to (% of picks)<input type="number" id="fastPct" min="1" max="99" value="80"></label>
+            <label>Medium up to (% of picks)<input type="number" id="medPct" min="2" max="100" value="95"></label>
+            <label>Not moving after (days)<input type="number" id="nonDays" min="1" value="90"></label>
+          </div>
+        </div>
+      </div>
+    </details>
+  </section>
+</div>
+
+<script>
+(() => {
+  const AREAS = ["Dry", "Chilled", "Frozen"];
+  const CLASSES = ["Fast", "Medium", "Slow", "Non-moving"];
+  const CLASS_VAR = { Fast: "--fast", Medium: "--medium", Slow: "--slow", "Non-moving": "--non" };
+  const AREA_VAR = { Dry: ["--dry", "--dry-tint"], Chilled: ["--chilled", "--chilled-tint"], Frozen: ["--frozen", "--frozen-tint"], Unassigned: ["--unset", "--unset-tint"] };
+  const POSITION = {
+    Fast: "Ground level, closest to dispatch",
+    Medium: "Ground or first level, middle aisles",
+    Slow: "Upper levels or far aisles",
+    "Non-moving": "Top level or overflow; review",
+  };
+  // row layout
+  const P = 0, NAME = 1, DAY = 2, MT = 3, QTY = 4, BIN = 5, DEPT = 6, LOC = 7, LOCNO = 8, REASON = 9;
+  const WANT = { "product": P, "product name": NAME, "move date": DAY, "move type": MT, "quantity": QTY,
+                 "bin locn": BIN, "department": DEPT, "location": LOC, "loc no": LOCNO, "reasondesc": REASON };
+  const STORAGE_COLS = { "None (use product names)": -1, "Location": LOC, "Loc No": LOCNO, "Department": DEPT, "Bin prefix": BIN };
+  const AREA_LABEL = { Dry: "Dry", Chilled: "Chilled", Frozen: "Frozen", Unassigned: "To check" };
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("okc." + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("okc." + k, JSON.stringify(v)); } catch {} },
+  };
+
+  const S = {
+    rows: [], fileName: "", storageCol: null,
+    mapping: store.get("mapping", {}), outboundSaved: store.get("outbound", null),
+    defaultDry: store.get("defaultDry2", false), dryByDefault: 0, productArea: store.get("productArea", {}),
+    outbound: new Set(), moveTypes: [],
+    zone: "Dry", cls: "All", query: "", sort: { key: "picks", dir: -1 },
+    products: [], periodStart: 0, periodEnd: 0,
+  };
+  const $ = id => document.getElementById(id);
+  let downloads = null;
+  function initDownloads(tries) {
+    if (window.claude && window.claude.use) {
+      window.claude.use("downloads").then(d => {
+        downloads = d;
+        if (d) { ["exportZone", "exportAll", "exportList"].forEach(id => $(id).classList.remove("hidden")); }
+      }).catch(() => {});
+    } else if (tries > 0) setTimeout(() => initDownloads(tries - 1), 500);
+  }
+  initDownloads(10);
+
+  // ---------- parsing helpers ----------
+  const clean = v => (v === null || v === undefined) ? "" : String(v).trim();
+  function num(v) {
+    if (typeof v === "number") return v;
+    let s = clean(v).replace(/,/g, "").replace(/£/g, "");
+    if (!s) return NaN;
+    let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    if (/-$/.test(s)) { neg = true; s = s.slice(0, -1); }
+    const n = parseFloat(s);
+    return neg ? -Math.abs(n) : n;
+  }
+  const MONTHS = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+  function dayNum(v) {
+    if (v instanceof Date && !isNaN(v)) return Math.floor(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()) / 864e5);
+    if (typeof v === "number" && v > 20000 && v < 80000) return Math.floor(v - 25569);
+    const s = clean(v); let m;
+    if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return Math.floor(Date.UTC(+m[1], m[2] - 1, +m[3]) / 864e5);
+    if ((m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/))) {
+      let y = +m[3]; if (y < 100) y += 2000;
+      return Math.floor(Date.UTC(y, m[2] - 1, +m[1]) / 864e5);
+    }
+    if ((m = s.match(/^(\d{1,2})[\s\-]([A-Za-z]{3})[A-Za-z]*[\s\-,]+(\d{2,4})/))) {
+      const mo = MONTHS[m[2].toLowerCase()]; if (mo === undefined) return NaN;
+      let y = +m[3]; if (y < 100) y += 2000;
+      return Math.floor(Date.UTC(y, mo, +m[1]) / 864e5);
+    }
+    return NaN;
+  }
+  const fmtDay = d => (d === null || d === undefined || d < 0 || isNaN(d)) ? "" :
+    new Date(d * 864e5).toLocaleDateString("en-GB", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" });
+  const fmt = (n, dp = 0) => Number(n).toLocaleString("en-GB", { maximumFractionDigits: dp, minimumFractionDigits: dp });
+
+  function findHeader(row) {
+    const cells = row.map(c => clean(c).toLowerCase());
+    if (!(cells.includes("product") && cells.includes("move type") && cells.includes("quantity"))) return null;
+    const idx = {};
+    cells.forEach((c, i) => { if (c in WANT && !(c in idx)) idx[c] = i; });
+    return idx;
+  }
+  function makeRow(row, idx) {
+    const product = clean(row[idx["product"]]);
+    if (!product) return null;
+    const qty = num(row[idx["quantity"]]);
+    const day = dayNum(row[idx["move date"]]);
+    if (isNaN(qty) || isNaN(day)) return null;
+    const g = k => idx[k] === undefined ? "" : clean(row[idx[k]]);
+    return [product, g("product name"), day, g("move type"), qty, g("bin locn"), g("department"), g("location"), g("loc no"), g("reasondesc")];
+  }
+
+  function setStatus(msg, err) { const el = $("status"); el.textContent = msg; el.classList.toggle("error", !!err); }
+
+  function readFile(file) {
+    S.rows = []; S.fileName = file.name;
+    setStatus("Reading " + file.name + "…");
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    if (isExcel) {
+      const fr = new FileReader();
+      fr.onload = () => {
+        try {
+          const wb = XLSX.read(new Uint8Array(fr.result), { type: "array", cellDates: true });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
+          let idx = null;
+          for (const r of data) {
+            if (!idx) { idx = findHeader(r); continue; }
+            const row = makeRow(r, idx); if (row) S.rows.push(row);
+          }
+          if (!idx) return setStatus("No header row with Product, Move Type and Quantity was found in the first sheet.", true);
+          loaded();
+        } catch (e) { setStatus("This Excel file couldn’t be read: " + e.message, true); }
+      };
+      fr.onerror = () => setStatus("The file couldn’t be opened.", true);
+      fr.readAsArrayBuffer(file);
+    } else {
+      let idx = null;
+      Papa.parse(file, {
+        skipEmptyLines: true, chunkSize: 4 * 1024 * 1024,
+        chunk: res => {
+          for (const r of res.data) {
+            if (!idx) { idx = findHeader(r); continue; }
+            const row = makeRow(r, idx); if (row) S.rows.push(row);
+          }
+          setStatus("Reading " + file.name + "… " + fmt(S.rows.length) + " lines");
+        },
+        complete: () => {
+          if (!idx) return setStatus("No header row with Product, Move Type and Quantity was found. Check this is a stock movement export.", true);
+          loaded();
+        },
+        error: e => setStatus("The file couldn’t be read: " + e.message, true),
+      });
+    }
+  }
+
+  // ---------- storage guessing ----------
+  function guessArea(v) {
+    const s = v.toUpperCase();
+    if (/FROZ|FRZ|FREEZ/.test(s)) return "Frozen";
+    if (/CHILLED|CHILLER|\bCHILL\b|\bCHL\b|FRIDGE|\bCOLD\b/.test(s)) return "Chilled";
+    if (/\bDRY\b|AMBIENT|\bAMB\b|GROCER/.test(s)) return "Dry";
+    return null;
+  }
+  // Order matters: explicit words first, then things that are dry even if they name a meat or fish
+  // ("fish sauce", "prawn crackers"), then frozen, chilled and dry categories.
+  const NAME_RULES = [
+    ["Frozen", /\b(FROZEN|FRZ|FROZ|IQF|ICE ?CREAMS?|ICE ?LOLL(Y|IES))\b/],
+    ["Chilled", /\b(CHILLED|CHILL)\b/],
+    ["Chilled", /\b(CHIPS?|FRIES|FRENCH ?FRIES|WEDGES)\b/],
+    ["Dry", /\b(AMBIENT|DRIED|DRY|UHT|CANNED|TINNED|CANS?|TINS?|JARS?|INSTANT|SAUCES?|STOCK|BOUILLON|CUBES?|POWDERS?|FLAVOU?RS?|FLAVOU?RED|SEASONINGS?|PASTES?|OILS?|CRACKERS?|SNACKS?|CRISPS?|BISCUITS?|COOKIES?|CANDY|SWEETS?)\b/],
+    ["Frozen", /\b(DUMPLINGS?|GYOZA|SPRING ?ROLLS?|DIM ?SUM|SIU ?MAI|SHU ?MAI|HAR ?GA[OU]|BAO|BUNS?|SAMOSAS?|PARATHAS?|ROTI|PRAWNS?|SHRIMPS?|SQUID|CALAMARI|OCTOPUS|CRABS?|MUSSELS?|SCALLOPS?|CLAMS?|LOBSTERS?|FISH|SALMON|BASA|PANGASIUS|TILAPIA|POMFRET|MACKEREL|SEA ?BASS|SEAFOOD|FISH ?BALLS?|FISH ?CAKES?|CHICKEN|DUCK|PORK|BEEF|LAMB|MUTTON|MEAT|POULTRY|WINGS?|EDAMAME)\b/],
+    ["Chilled", /\b(FRESH|TOFU|BEAN ?CURD|BEAN ?SPROUTS?|BEANSPROUTS?|KIMCHI|PAK ?CHOI|BOK ?CHOY|CHOI ?SUM|GAI ?LAN|CORIANDER|LEMON ?GRASS|SPRING ?ONIONS?|HERBS?|BASIL|MINT|YOGH?URTS?|BUTTER|CHEESE|CREAM|EGGS)\b/],
+    ["Dry", /\b(RICE|NOODLES?|VERMICELLI|PASTA|SOY|SOYA|VINEGAR|FLOUR|STARCH|SUGAR|SALT|MSG|SPICES?|CURRY|TEA|COFFEE|DRINKS?|JUICES?|WATER|SODA|COCONUT|SESAME|BEANS|LENTILS?|DAL|DHAL|PICKLED?|WRAPPERS?|PAPER|CHOPSTICKS?|FOIL|TRAYS?|BOX(ES)?|BAGS?|CONTAINERS?|NAPKINS?|CUPS?|LIDS?|GLOVES?|CHILLI|CHILI|GARLIC|NUTS?|PEANUTS?|CASHEWS?|SEEDS?|HONEY|JAM|SYRUP)\b/],
+  ];
+  function nameGuess(name) {
+    const s = String(name).toUpperCase().replace(/[^A-Z0-9 ]+/g, " ");
+    for (const [area, re] of NAME_RULES) if (re.test(s)) return area;
+    return null;
+  }
+  function keyOf(row, col) {
+    const i = STORAGE_COLS[col];
+    if (i === -1) return "(none)";
+    if (col === "Bin prefix") { const m = row[BIN].match(/^[A-Za-z]+/); return m ? m[0].toUpperCase() : "(no letter)"; }
+    return row[i] || "(blank)";
+  }
+  function areaFor(col, key) {
+    if (STORAGE_COLS[col] === -1) return "Not set";
+    const saved = (S.mapping[col] || {})[key];
+    return saved || guessArea(key) || "Not set";
+  }
+  function pickStorageCol() {
+    let best = "None (use product names)", bestScore = 0;
+    for (const col of Object.keys(STORAGE_COLS)) {
+      if (STORAGE_COLS[col] === -1) continue;
+      const counts = new Map();
+      for (const r of S.rows) { const k = keyOf(r, col); counts.set(k, (counts.get(k) || 0) + 1); }
+      if (counts.size < 2) continue;
+      let score = 0;
+      const saved = S.mapping[col] || {};
+      for (const [k, n] of counts) if (saved[k] || guessArea(k)) score += n;
+      if (score > bestScore) { bestScore = score; best = col; }
+    }
+    return best;
+  }
+
+  // ---------- after load ----------
+  function loaded() {
+    if (!S.rows.length) return setStatus("No usable lines were found. Check that Move Date and Quantity are filled in.", true);
+    let lo = Infinity, hi = -Infinity;
+    const mt = new Map();
+    for (const r of S.rows) {
+      if (r[DAY] < lo) lo = r[DAY]; if (r[DAY] > hi) hi = r[DAY];
+      let m = mt.get(r[MT]); if (!m) { m = { type: r[MT], lines: 0, neg: 0, pos: 0, reason: "" }; mt.set(r[MT], m); }
+      m.lines++; if (r[QTY] < 0) m.neg++; else if (r[QTY] > 0) m.pos++;
+      if (!m.reason && r[REASON]) m.reason = r[REASON];
+    }
+    S.periodStart = lo; S.periodEnd = hi;
+    S.moveTypes = [...mt.values()].sort((a, b) => b.lines - a.lines);
+    S.outbound = new Set();
+    for (const m of S.moveTypes) {
+      const saved = S.outboundSaved && m.type in S.outboundSaved ? S.outboundSaved[m.type] : null;
+      if (saved === true || (saved === null && m.neg / m.lines >= 0.9)) S.outbound.add(m.type);
+    }
+    S.storageCol = pickStorageCol();
+    setStatus(fmt(S.rows.length) + " lines read from " + S.fileName + ".");
+    renderSettings();
+    compute();
+    $("results").classList.remove("hidden");
+  }
+
+  // ---------- compute ----------
+  function compute() {
+    const col = S.storageCol;
+    const fastShare = Math.min(Math.max(+$("fastPct").value || 80, 1), 99) / 100;
+    const medShare = Math.max(Math.min(+$("medPct").value || 95, 100) / 100, fastShare);
+    const nonDays = Math.max(+$("nonDays").value || 90, 1);
+    const keyArea = new Map();
+    const prods = new Map();
+    const pickDays = new Set();
+    for (const r of S.rows) {
+      const k = keyOf(r, col);
+      let area = keyArea.get(k);
+      if (area === undefined) { area = areaFor(col, k); keyArea.set(k, area); }
+      if (area === "Exclude") continue;
+      let p = prods.get(r[P]);
+      if (!p) { p = { id: r[P], name: "", bin: "", dept: "", seen: -1, t: { Dry: 0, Chilled: 0, Frozen: 0 }, picks: 0, qty: 0, days: new Set(), last: -1 }; prods.set(r[P], p); }
+      if (r[DAY] >= p.seen) { p.seen = r[DAY]; if (r[NAME]) p.name = r[NAME]; if (r[BIN]) p.bin = r[BIN]; if (r[DEPT]) p.dept = r[DEPT]; }
+      if (area !== "Not set") p.t[area]++;
+      if (S.outbound.has(r[MT])) {
+        p.qty -= r[QTY];
+        if (r[QTY] < 0) { p.picks++; p.days.add(r[DAY]); pickDays.add(r[DAY]); if (r[DAY] > p.last) p.last = r[DAY]; }
+      }
+    }
+    const weeks = Math.max((S.periodEnd - S.periodStart + 1) / 7, 1);
+    const totalPickDays = Math.max(pickDays.size, 1);
+    const list = [];
+    let dryDefaulted = 0;
+    for (const p of prods.values()) {
+      let area = "Unassigned", best = 0, how = "";
+      const own = S.productArea[p.id];
+      if (own && AREAS.includes(own)) { area = own; how = "Set by you"; }
+      else {
+        for (const a of AREAS) if (p.t[a] > best) { best = p.t[a]; area = a; how = col; }
+        if (area === "Unassigned") { const g = nameGuess(p.name); if (g) { area = g; how = "Product name"; } }
+        if (area === "Unassigned" && S.defaultDry) { area = "Dry"; how = "Unknown, counted as dry"; dryDefaulted++; }
+      }
+      const since = p.last >= 0 ? S.periodEnd - p.last : null;
+      list.push({
+        area, how, id: p.id, name: p.name, dept: p.dept, bin: p.bin,
+        picks: p.picks, perWeek: p.picks / weeks, qty: Math.max(p.qty, 0),
+        daysPct: p.days.size / totalPickDays * 100, last: p.last, since, cls: null,
+      });
+    }
+    for (const area of [...AREAS, "Unassigned"]) {
+      const group = list.filter(x => x.area === area);
+      const moving = group.filter(x => x.picks > 0 && x.since !== null && x.since <= nonDays)
+                          .sort((a, b) => b.picks - a.picks || b.qty - a.qty);
+      const total = moving.reduce((s, x) => s + x.picks, 0);
+      let cum = 0;
+      for (const x of moving) {
+        const before = cum / total;
+        x.cls = before < fastShare ? "Fast" : before < medShare ? "Medium" : "Slow";
+        cum += x.picks;
+      }
+      for (const x of group) if (!x.cls) x.cls = "Non-moving";
+    }
+    S.products = list;
+    S.dryByDefault = dryDefaulted;
+    if (!list.some(x => x.area === S.zone)) S.zone = [...AREAS, "Unassigned"].find(a => list.some(x => x.area === a)) || "Dry";
+    renderZones(); renderTable(); renderMapTable();
+    $("mapWrap").classList.toggle("hidden", STORAGE_COLS[col] === -1);
+    $("meta").textContent = "Period " + fmtDay(S.periodStart) + " to " + fmtDay(S.periodEnd) + " (" + fmt(weeks, 1) + " weeks). " +
+      fmt(list.length) + " products. Storage decided by " + col + ". Picks counted from " + S.outbound.size + " movement type" + (S.outbound.size === 1 ? "" : "s") + "." +
+      (S.dryByDefault ? " " + fmt(S.dryByDefault) + " unknown products are counted as dry." : "") +
+      " Storage comes from: " + Object.entries(list.reduce((m, x) => (m[x.how || "Unknown"] = (m[x.how || "Unknown"] || 0) + 1, m), {})).map(([k, n]) => k + " " + fmt(n)).join(", ") + ".";
+  }
+  let timer; const recompute = () => { clearTimeout(timer); timer = setTimeout(compute, 120); };
+
+  // ---------- render ----------
+  function renderZones() {
+    const el = $("zones"); el.innerHTML = "";
+    const zones = [...AREAS]; if (S.products.some(x => x.area === "Unassigned")) zones.push("Unassigned");
+    for (const z of zones) {
+      const g = S.products.filter(x => x.area === z);
+      const c = {}; CLASSES.forEach(k => c[k] = g.filter(x => x.cls === k).length);
+      const b = document.createElement("button");
+      b.className = "zone"; b.type = "button"; b.setAttribute("aria-pressed", S.zone === z);
+      b.style.setProperty("--zc", `var(${AREA_VAR[z][0]})`); b.style.setProperty("--zt", `var(${AREA_VAR[z][1]})`);
+      const bar = g.length ? CLASSES.map(k => `<i style="width:${c[k] / g.length * 100}%;background:var(${CLASS_VAR[k]})"></i>`).join("") : "";
+      b.innerHTML = `<div class="zone-name">${AREA_LABEL[z]}</div>
+        <div class="zone-count">${fmt(g.length)} product${g.length === 1 ? "" : "s"}${z === "Unassigned" && g.length ? ": set them in the Storage column" : ""}</div>
+        <div class="bar">${bar}</div>
+        <div class="legend">${CLASSES.map(k => `<span><span class="dot" style="background:var(${CLASS_VAR[k]})"></span>${k} ${c[k]}</span>`).join("")}</div>`;
+      b.onclick = () => { S.zone = z; renderZones(); renderTable(); };
+      el.appendChild(b);
+    }
+    const chips = $("classChips"); chips.innerHTML = "";
+    for (const k of ["All", ...CLASSES]) {
+      const ch = document.createElement("button");
+      ch.className = "chip"; ch.type = "button"; ch.textContent = k; ch.setAttribute("aria-pressed", S.cls === k);
+      ch.onclick = () => { S.cls = k; renderZones(); renderTable(); };
+      chips.appendChild(ch);
+    }
+  }
+
+  const COLS = [
+    { key: "id", label: "Product" },
+    { key: "name", label: "Product name", cls: "name" },
+    { key: "dept", label: "Department" },
+    { key: "bin", label: "Current bin" },
+    { key: "picks", label: "Picks", num: true, f: v => fmt(v) },
+    { key: "perWeek", label: "Picks / week", num: true, f: v => fmt(v, 1) },
+    { key: "qty", label: "Qty out", num: true, f: v => fmt(v) },
+    { key: "daysPct", label: "% days picked", num: true, f: v => fmt(v, 0) + "%" },
+    { key: "last", label: "Last picked", f: v => fmtDay(v) },
+    { key: "cls", label: "Class", f: v => `<span class="tag ${v}">${v}</span>`, html: true },
+    { key: "pos", label: "Suggested position", f: (v, r) => POSITION[r.cls] },
+    { key: "area", label: "Storage", html: true, f: (v, r) => `<select class="areaSel" data-id="${esc(r.id)}" aria-label="Storage area for ${esc(r.id)}" title="${esc(r.how || "Not known")}">` +
+        ["Unassigned", ...AREAS].map(a => `<option value="${a}" ${a === r.area ? "selected" : ""}>${AREA_LABEL[a]}</option>`).join("") + "</select>" },
+  ];
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const CLASS_ORDER = { Fast: 0, Medium: 1, Slow: 2, "Non-moving": 3 };
+
+  function visibleRows() {
+    const q = S.query.toLowerCase();
+    let rows = S.products.filter(x => x.area === S.zone && (S.cls === "All" || x.cls === S.cls));
+    if (q) rows = rows.filter(x => (x.id + " " + x.name + " " + x.bin + " " + x.dept).toLowerCase().includes(q));
+    const { key, dir } = S.sort;
+    rows.sort((a, b) => {
+      let va = key === "cls" ? CLASS_ORDER[a.cls] : a[key], vb = key === "cls" ? CLASS_ORDER[b.cls] : b[key];
+      if (typeof va === "string") return dir * va.localeCompare(vb, "en", { numeric: true });
+      return dir * ((va ?? -1) - (vb ?? -1));
+    });
+    return rows;
+  }
+
+  function renderTable() {
+    const thead = $("table").tHead, tbody = $("table").tBodies[0];
+    thead.innerHTML = "<tr>" + COLS.map(c => {
+      const sort = S.sort.key === c.key ? (S.sort.dir > 0 ? "ascending" : "descending") : "none";
+      return `<th class="${c.num ? "num" : ""}" data-key="${c.key}" aria-sort="${sort}" tabindex="${c.key === "pos" ? -1 : 0}">${c.label}</th>`;
+    }).join("") + "</tr>";
+    thead.querySelectorAll("th").forEach(th => {
+      const k = th.dataset.key; if (k === "pos") return;
+      const go = () => { S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : (["id", "name", "dept", "bin"].includes(k) ? 1 : -1) }; renderTable(); };
+      th.onclick = go; th.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
+    });
+    const rows = visibleRows(), LIMIT = 400;
+    tbody.innerHTML = rows.slice(0, LIMIT).map(r => "<tr>" + COLS.map(c => {
+      const v = c.f ? c.f(r[c.key], r) : r[c.key];
+      return `<td class="${c.num ? "num" : ""} ${c.cls || ""}">${c.html ? v : esc(v ?? "")}</td>`;
+    }).join("") + "</tr>").join("") || `<tr><td colspan="${COLS.length}">No products match. Clear the search or pick another class.</td></tr>`;
+    tbody.querySelectorAll(".areaSel").forEach(sel => sel.onchange = e => {
+      const id = sel.dataset.id;
+      if (e.target.value === "Unassigned") delete S.productArea[id]; else S.productArea[id] = e.target.value;
+      store.set("productArea", S.productArea); recompute();
+    });
+    $("more").textContent = rows.length > LIMIT ? `Showing the first ${LIMIT} of ${fmt(rows.length)}. Search or filter to narrow it down${downloads ? ", or download the full list" : ""}.` : `${fmt(rows.length)} product${rows.length === 1 ? "" : "s"}`;
+  }
+
+  function renderSettings() {
+    const sel = $("storageCol");
+    sel.innerHTML = Object.keys(STORAGE_COLS).map(c => `<option ${c === S.storageCol ? "selected" : ""}>${c}</option>`).join("");
+    const tb = $("mtTable").tBodies[0];
+    tb.innerHTML = S.moveTypes.map((m, i) => `<tr>
+      <td><input type="checkbox" id="mt${i}" ${S.outbound.has(m.type) ? "checked" : ""} aria-label="Count ${esc(m.type || "(blank)")} as picks"></td>
+      <td><label for="mt${i}">${esc(m.type || "(blank)")}</label></td><td class="num">${fmt(m.lines)}</td>
+      <td class="num">${fmt(m.neg)}</td><td class="num">${fmt(m.pos)}</td><td>${esc(m.reason)}</td></tr>`).join("");
+    S.moveTypes.forEach((m, i) => {
+      $("mt" + i).onchange = e => {
+        e.target.checked ? S.outbound.add(m.type) : S.outbound.delete(m.type);
+        const saved = store.get("outbound", {}) || {}; saved[m.type] = e.target.checked; store.set("outbound", saved); S.outboundSaved = saved;
+        recompute();
+      };
+    });
+  }
+
+  function renderMapTable() {
+    const col = S.storageCol, counts = new Map();
+    for (const r of S.rows) { const k = keyOf(r, col); counts.set(k, (counts.get(k) || 0) + 1); }
+    const keys = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
+    const tb = $("mapTable").tBodies[0];
+    const opts = ["Not set", "Dry", "Chilled", "Frozen", "Exclude"];
+    tb.innerHTML = keys.map((k, i) => {
+      const a = areaFor(col, k);
+      return `<tr><td>${esc(k)}</td><td class="num">${fmt(counts.get(k))}</td>
+        <td><select id="map${i}" aria-label="Storage area for ${esc(k)}">${opts.map(o => `<option ${o === a ? "selected" : ""}>${o}</option>`).join("")}</select></td></tr>`;
+    }).join("");
+    keys.forEach((k, i) => {
+      $("map" + i).onchange = e => {
+        S.mapping[col] = S.mapping[col] || {}; S.mapping[col][k] = e.target.value; store.set("mapping", S.mapping); recompute();
+      };
+    });
+  }
+
+  // ---------- export ----------
+  function toCsv(rows) {
+    const head = ["Storage", "Product", "Product name", "Department", "Current bin", "Picks", "Picks per week", "Qty out", "% days picked", "Last picked", "Days since last pick", "Class", "Suggested position"];
+    const q = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const lines = rows.map(r => [r.area, r.id, r.name, r.dept, r.bin, r.picks, r.perWeek.toFixed(2), r.qty, r.daysPct.toFixed(1), fmtDay(r.last), r.since ?? "", r.cls, POSITION[r.cls]].map(q).join(","));
+    return [head.join(","), ...lines].join("\n");
+  }
+  async function save(rows, name) {
+    if (!downloads) return;
+    try { await downloads.save({ filename: name, data: toCsv(rows) }); }
+    catch (e) { if (e && e.code !== "declined") setStatus("The download didn’t go through (" + (e.code || "error") + ").", true); }
+  }
+  $("exportZone").onclick = () => {
+    const rows = visibleRows();
+    save(rows, `${S.zone.toLowerCase()}-${S.cls === "All" ? "all" : S.cls.toLowerCase()}-movers.csv`);
+  };
+  $("exportAll").onclick = () => {
+    const rows = [...S.products].sort((a, b) => a.area.localeCompare(b.area) || CLASS_ORDER[a.cls] - CLASS_ORDER[b.cls] || b.picks - a.picks);
+    save(rows, "fast-slow-moving-all-areas.csv");
+  };
+
+  // ---------- storage list ----------
+  $("exportList").onclick = async () => {
+    if (!downloads) return;
+    const q = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const rows = [...S.products].sort((a, b) => a.area.localeCompare(b.area) || a.id.localeCompare(b.id, "en", { numeric: true }));
+    const csv = ["Product,Product name,Storage,How decided", ...rows.map(r => [r.id, r.name, AREA_LABEL[r.area], r.how].map(q).join(","))].join("\n");
+    try { await downloads.save({ filename: "product-storage-list.csv", data: csv }); }
+    catch (e) { if (e && e.code !== "declined") $("listStatus").textContent = "The download didn’t go through (" + (e.code || "error") + ")."; }
+  };
+  $("listFile").onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    Papa.parse(f, { skipEmptyLines: true, complete: res => {
+      const data = res.data; let pi = -1, si = -1, start = 0;
+      for (let i = 0; i < Math.min(data.length, 10); i++) {
+        const c = data[i].map(x => clean(x).toLowerCase());
+        if (c.includes("product") && (c.includes("storage") || c.includes("area"))) { pi = c.indexOf("product"); si = c.includes("storage") ? c.indexOf("storage") : c.indexOf("area"); start = i + 1; break; }
+      }
+      if (pi < 0) { $("listStatus").textContent = "That file needs a Product column and a Storage column."; return; }
+      let n = 0;
+      for (const r of data.slice(start)) {
+        const id = clean(r[pi]), a = clean(r[si]).toLowerCase();
+        const area = a.startsWith("dry") || a.startsWith("amb") ? "Dry" : a.startsWith("chil") ? "Chilled" : a.startsWith("froz") ? "Frozen" : null;
+        if (id && area) { S.productArea[id] = area; n++; }
+      }
+      store.set("productArea", S.productArea);
+      $("listStatus").textContent = fmt(n) + " products loaded from " + f.name + ".";
+      e.target.value = ""; if (S.rows.length) recompute();
+    }});
+  };
+  $("clearList").onclick = () => {
+    if (!confirm("Clear every storage area you set by hand?")) return;
+    S.productArea = {}; store.set("productArea", {}); $("listStatus").textContent = "Your changes were cleared."; if (S.rows.length) recompute();
+  };
+
+  // ---------- events ----------
+  $("file").onchange = e => { const f = e.target.files[0]; if (f) readFile(f); };
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+  $("search").oninput = e => { S.query = e.target.value; renderTable(); };
+  $("storageCol").onchange = e => { S.storageCol = e.target.value; recompute(); };
+  $("defaultDry").checked = S.defaultDry;
+  $("defaultDry").onchange = e => { S.defaultDry = e.target.checked; store.set("defaultDry2", S.defaultDry); recompute(); };
+  ["fastPct", "medPct", "nonDays"].forEach(id => $(id).oninput = recompute);
+})();
+</script>
+</body>
+</html>
